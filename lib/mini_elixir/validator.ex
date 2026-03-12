@@ -390,6 +390,16 @@ defmodule MiniElixir.Validator do
   # Allow local function calls (single function name)
   defp fnok([function_name]) when is_atom(function_name), do: :ok
 
+  defp fnok([module | _] = p) when is_atom(module) do
+    allowed = Application.get_env(:mini_elixir, :allowed_modules, [])
+
+    if module in allowed do
+      :ok
+    else
+      {:error, :validator, "Forbidden function: #{redot(p)}"}
+    end
+  end
+
   defp fnok(p) do
     {:error, :validator, "Forbidden function: #{redot(p)}"}
   end
@@ -399,7 +409,7 @@ defmodule MiniElixir.Validator do
 
   defp dedot({{:., _, [l, r]}, _, []}, acc), do: dedot(l, [r | acc])
   defp dedot({:., _, [l, r]}, acc), do: dedot(l, [r | acc])
-  defp dedot({:__aliases__, _, [name]}, acc), do: [Module.concat([name]) | acc]
+  defp dedot({:__aliases__, _, names}, acc), do: [Module.concat(names) | acc]
   defp dedot({name, _, _}, acc) when is_atom(name), do: [name | acc]
   defp dedot(l, acc) when is_atom(l), do: [l | acc]
 
