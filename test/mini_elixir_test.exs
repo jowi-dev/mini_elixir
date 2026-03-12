@@ -191,7 +191,9 @@ defmodule MiniElixirTest do
       """
 
       # Now this should be properly rejected due to nested module validation
-      assert {:error, message} = MiniElixir.eval(code, NameFormatterNested, :format_name, ["john"])
+      assert {:error, message} =
+               MiniElixir.eval(code, NameFormatterNested, :format_name, ["john"])
+
       assert message =~ "Nested modules are not allowed"
     end
 
@@ -243,6 +245,96 @@ defmodule MiniElixirTest do
       # This should be rejected due to immediate execution validation
       assert {:error, message} = MiniElixir.eval(code, ImmediateExecution, :safe_function, [1])
       assert message =~ "Immediate code execution in modules is not allowed"
+    end
+  end
+
+  describe "allowed_modules configuration" do
+    setup do
+      # Clean up any previous config
+      previous = Application.get_env(:mini_elixir, :allowed_modules)
+      Application.delete_env(:mini_elixir, :allowed_modules)
+
+      on_exit(fn ->
+        if previous do
+          Application.put_env(:mini_elixir, :allowed_modules, previous)
+        else
+          Application.delete_env(:mini_elixir, :allowed_modules)
+        end
+      end)
+
+      :ok
+    end
+
+    test "multi-part module calls are rejected by default" do
+      code = ~S"""
+      defmodule RejectedMultiPart do
+        def run(price) do
+          MyApp.Helpers.format(price)
+        end
+      end
+      """
+
+      assert {:error, message} =
+               MiniElixir.eval(code, RejectedMultiPart, :run, [100.0], persistent: false)
+
+      assert message =~ "Forbidden function"
+      assert message =~ "MyApp.Helpers"
+    end
+
+    test "configured modules are allowed" do
+      defmodule AllowedHelper do
+        def double(x), do: x * 2
+      end
+
+      Application.put_env(:mini_elixir, :allowed_modules, [AllowedHelper])
+
+      code = ~S"""
+      defmodule AllowedModuleTest do
+        def run(price) do
+          MiniElixirTest.AllowedHelper.double(price)
+        end
+      end
+      """
+
+      assert {:ok, 200.0} =
+               MiniElixir.eval(code, AllowedModuleTest, :run, [100.0], persistent: false)
+    end
+
+    test "unconfigured multi-part modules are still rejected when others are allowed" do
+      defmodule SafeHelper do
+        def safe(_x), do: :ok
+      end
+
+      Application.put_env(:mini_elixir, :allowed_modules, [SafeHelper])
+
+      code = ~S"""
+      defmodule StillRejectedModule do
+        def run(price) do
+          SomeOther.Module.evil(price)
+        end
+      end
+      """
+
+      assert {:error, message} =
+               MiniElixir.eval(code, StillRejectedModule, :run, [100.0], persistent: false)
+
+      assert message =~ "Forbidden function"
+    end
+
+    test "existing single-element whitelist modules still work" do
+      # String, Enum, Map etc. should still work regardless of allowed_modules config
+      Application.put_env(:mini_elixir, :allowed_modules, [])
+
+      code = ~S"""
+      defmodule WhitelistStillWorks do
+        def run(price) do
+          String.upcase(to_string(price))
+        end
+      end
+      """
+
+      assert {:ok, "100.0"} =
+               MiniElixir.eval(code, WhitelistStillWorks, :run, [100.0], persistent: false)
     end
   end
 end
