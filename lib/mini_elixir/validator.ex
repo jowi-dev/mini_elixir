@@ -391,9 +391,7 @@ defmodule MiniElixir.Validator do
   defp fnok([function_name]) when is_atom(function_name), do: :ok
 
   defp fnok([module | _] = p) when is_atom(module) do
-    allowed = Application.get_env(:mini_elixir, :allowed_modules, [])
-
-    if module in allowed do
+    if MapSet.member?(allowed_call_modules(), module) do
       :ok
     else
       {:error, :validator, "Forbidden function: #{redot(p)}"}
@@ -402,6 +400,56 @@ defmodule MiniElixir.Validator do
 
   defp fnok(p) do
     {:error, :validator, "Forbidden function: #{redot(p)}"}
+  end
+
+  @doc """
+  Returns the configured `:allowed_modules` list.
+
+  Each entry is either a bare module atom (calls to that module are permitted)
+  or a `{module, as: Alias}` tuple (an `alias module, as: Alias` statement is
+  permitted, and calls through both `module` and `Alias` are allowed).
+  """
+  def allowed_modules do
+    Application.get_env(:mini_elixir, :allowed_modules, [])
+  end
+
+  @doc """
+  Returns true when `alias source, as: as_name` is explicitly whitelisted via a
+  `{source, as: as_name}` entry in the `:allowed_modules` config.
+  """
+  def allowed_alias?(source, as_name) when is_atom(source) and is_atom(as_name) do
+    Enum.any?(allowed_modules(), fn
+      {module, opts} when is_atom(module) and is_list(opts) ->
+        module == source and alias_target(module, opts) == as_name
+
+      _ ->
+        false
+    end)
+  end
+
+  # Set of module atoms permitted as the head of a remote call. Bare entries
+  # contribute the module itself; alias entries contribute both the source
+  # module and the alias name so calls work before and after aliasing.
+  defp allowed_call_modules do
+    Enum.reduce(allowed_modules(), MapSet.new(), fn
+      {module, opts}, acc when is_atom(module) and is_list(opts) ->
+        acc |> MapSet.put(module) |> MapSet.put(alias_target(module, opts))
+
+      module, acc when is_atom(module) ->
+        MapSet.put(acc, module)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  # The effective alias name for an `{module, opts}` entry: the `:as` option if
+  # given, otherwise the last segment of the module (Elixir's default).
+  defp alias_target(module, opts) do
+    case Keyword.fetch(opts, :as) do
+      {:ok, as} when is_atom(as) -> as
+      _ -> Module.concat([module |> Module.split() |> List.last()])
+    end
   end
 
   # Convert left-associated instances of the . operator to a get_in path

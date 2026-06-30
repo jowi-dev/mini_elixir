@@ -156,8 +156,18 @@ defmodule MiniElixir do
     {:error, "Nested modules are not allowed"}
   end
 
-  defp validate_statement({:alias, _, _}) do
-    {:error, "Module aliases are not allowed"}
+  defp validate_statement({:alias, _, args}) do
+    case parse_alias(args) do
+      {:ok, source, as_name} ->
+        if Validator.allowed_alias?(source, as_name) do
+          :ok
+        else
+          {:error, "Module aliases are not allowed: #{inspect(source)}"}
+        end
+
+      :error ->
+        {:error, "Module aliases are not allowed"}
+    end
   end
 
   defp validate_statement({:import, _, _}) do
@@ -178,6 +188,24 @@ defmodule MiniElixir do
       _ -> {:error, "Immediate code execution in modules is not allowed"}
     end
   end
+
+  # Extract the source module and effective alias name from an `alias` AST.
+  # `alias Foo.Bar` defaults the alias name to the last segment (`Bar`).
+  defp parse_alias([{:__aliases__, _, parts}]) when is_list(parts) do
+    {:ok, Module.concat(parts), Module.concat([List.last(parts)])}
+  end
+
+  defp parse_alias([{:__aliases__, _, parts}, opts]) when is_list(parts) and is_list(opts) do
+    as_name =
+      case Keyword.fetch(opts, :as) do
+        {:ok, {:__aliases__, _, as_parts}} -> Module.concat(as_parts)
+        _ -> Module.concat([List.last(parts)])
+      end
+
+    {:ok, Module.concat(parts), as_name}
+  end
+
+  defp parse_alias(_), do: :error
 
   defp unwrap_function(
          {:defmodule, _, [_, [do: {:__block__, _, defs}]]},

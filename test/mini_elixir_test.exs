@@ -336,5 +336,97 @@ defmodule MiniElixirTest do
       assert {:ok, "100.0"} =
                MiniElixir.eval(code, WhitelistStillWorks, :run, [100.0], persistent: false)
     end
+
+    test "bare module entries do not permit aliasing" do
+      defmodule BareHelper do
+        def double(x), do: x * 2
+      end
+
+      Application.put_env(:mini_elixir, :allowed_modules, [BareHelper])
+
+      code = ~S"""
+      defmodule BareAliasRejected do
+        alias MiniElixirTest.BareHelper, as: Helper
+
+        def run(price) do
+          Helper.double(price)
+        end
+      end
+      """
+
+      assert {:error, message} =
+               MiniElixir.eval(code, BareAliasRejected, :run, [100.0], persistent: false)
+
+      assert message =~ "Module aliases are not allowed"
+    end
+
+    test "configured aliases are allowed and usable" do
+      defmodule AliasableHelper do
+        def double(x), do: x * 2
+      end
+
+      Application.put_env(:mini_elixir, :allowed_modules, [
+        {MiniElixirTest.AliasableHelper, as: Helper}
+      ])
+
+      code = ~S"""
+      defmodule ConfiguredAliasTest do
+        alias MiniElixirTest.AliasableHelper, as: Helper
+
+        def run(price) do
+          Helper.double(price)
+        end
+      end
+      """
+
+      assert {:ok, 200.0} =
+               MiniElixir.eval(code, ConfiguredAliasTest, :run, [100.0], persistent: false)
+    end
+
+    test "aliasing with a different name than configured is rejected" do
+      defmodule MismatchHelper do
+        def double(x), do: x * 2
+      end
+
+      Application.put_env(:mini_elixir, :allowed_modules, [
+        {MiniElixirTest.MismatchHelper, as: Helper}
+      ])
+
+      code = ~S"""
+      defmodule MismatchAliasTest do
+        alias MiniElixirTest.MismatchHelper, as: SomethingElse
+
+        def run(price) do
+          SomethingElse.double(price)
+        end
+      end
+      """
+
+      assert {:error, message} =
+               MiniElixir.eval(code, MismatchAliasTest, :run, [100.0], persistent: false)
+
+      assert message =~ "Module aliases are not allowed"
+    end
+
+    test "configured aliases also allow direct calls to the source module" do
+      defmodule DirectCallHelper do
+        def double(x), do: x * 2
+      end
+
+      Application.put_env(:mini_elixir, :allowed_modules, [
+        {MiniElixirTest.DirectCallHelper, as: Helper}
+      ])
+
+      code = ~S"""
+      defmodule DirectCallTest do
+        def run(price) do
+          MiniElixirTest.DirectCallHelper.double(price)
+        end
+      end
+      """
+
+      assert {:ok, 200.0} =
+               MiniElixir.eval(code, DirectCallTest, :run, [100.0], persistent: false)
+    end
   end
 end
